@@ -1,6 +1,7 @@
 ﻿# WhisperX Local (GPU)
 
 Transcripción local de audio en español usando GPU NVIDIA.
+Requiere python 3.13
 
 ## Archivos principales
 
