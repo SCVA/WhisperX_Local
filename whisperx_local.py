@@ -12,26 +12,27 @@ from faster_whisper import BatchedInferencePipeline, WhisperModel
 from docx import Document
 
 
-def choose_compute_type(requested: str) -> str:
+def choose_compute_type(device: str, requested: str) -> str:
     try:
-        supported = ctranslate2.get_supported_compute_types("cuda")
+        supported = ctranslate2.get_supported_compute_types(device)
     except Exception as exc:
-        raise RuntimeError(
-            "CUDA is not available for CTranslate2. This script is GPU-only."
-        ) from exc
+        raise RuntimeError(f"{device.upper()} is not available for CTranslate2.") from exc
 
-    if requested in supported:
+    if requested != "auto" and requested in supported:
         return requested
 
-    preferred = [
-        "float16",
-        "int8_float16",
-        "bfloat16",
-        "int8_bfloat16",
-        "float32",
-        "int8_float32",
-        "int8",
-    ]
+    if device == "cpu":
+        preferred = ["int8", "int8_float32", "float32"]
+    else:
+        preferred = [
+            "float16",
+            "int8_float16",
+            "bfloat16",
+            "int8_bfloat16",
+            "float32",
+            "int8_float32",
+            "int8",
+        ]
     for candidate in preferred:
         if candidate in supported:
             return candidate
@@ -146,21 +147,21 @@ def apply_preset(args: argparse.Namespace) -> None:
         return
 
     if preset == "fast":
-        args.batch_size = 64
+        args.batch_size = 8 if args.device == "cpu" else 64
         args.beam_size = 1
         args.best_of = 1
         args.condition_on_previous_text = False
         return
 
     if preset == "balanced":
-        args.batch_size = 32
+        args.batch_size = 4 if args.device == "cpu" else 32
         args.beam_size = 3
         args.best_of = 3
         args.condition_on_previous_text = False
         return
 
     if preset == "quality":
-        args.batch_size = 24
+        args.batch_size = 2 if args.device == "cpu" else 24
         args.beam_size = 5
         args.best_of = 5
         args.condition_on_previous_text = False
@@ -192,6 +193,7 @@ def run(
     output_dir: Path,
     model_name: str,
     language: str | None,
+    device: str,
     batch_size: int,
     requested_compute_type: str,
     beam_size: int,
@@ -216,8 +218,11 @@ def run(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    compute_type = choose_compute_type(requested_compute_type)
-    print(f"Config -> ASR device: cuda, compute_type: {compute_type}")
+    compute_type = choose_compute_type(device, requested_compute_type)
+    resolved_diarization_device = (
+        device if diarization_device == "auto" else diarization_device
+    )
+    print(f"Config -> ASR device: {device}, compute_type: {compute_type}")
     print(
         "Decode -> "
         f"beam_size={beam_size}, best_of={best_of}, patience={patience}, "
@@ -237,7 +242,7 @@ def run(
     used_batch_size = None
 
     if diarize:
-        # WhisperX route: ASR on GPU + diarization on CPU/CUDA.
+        # WhisperX route: ASR and diarization on the selected devices.
         import torch
         import whisperx
         from whisperx.diarize import DiarizationPipeline, assign_word_speakers
@@ -258,7 +263,7 @@ def run(
         )
         model = whisperx.load_model(
             model_name,
-            "cuda",
+            device,
             compute_type=compute_type,
             asr_options=asr_options,
             language=language,
@@ -302,7 +307,7 @@ def run(
         try:
             diarize_model = DiarizationPipeline(
                 token=token,
-                device=diarization_device,
+                device=resolved_diarization_device,
             )
         except Exception as exc:
             message = str(exc).lower()
@@ -323,7 +328,8 @@ def run(
 
         print(
             "Running diarization -> "
-            f"device={diarization_device}, constraints={diarize_kwargs or 'auto'}"
+            f"device={resolved_diarization_device}, "
+            f"constraints={diarize_kwargs or 'auto'}"
         )
         if audio.size == 0:
             raise RuntimeError("Decoded audio is empty; cannot run diarization.")
@@ -357,16 +363,15 @@ def run(
         # Faster-whisper route: maximum speed for plain transcription.
         model = WhisperModel(
             model_name,
-            device="cuda",
+            device=device,
             compute_type=compute_type,
             device_index=0,
         )
 
         backend_device = getattr(model.model, "device", "unknown")
-        if str(backend_device) != "cuda":
+        if str(backend_device) != device:
             raise RuntimeError(
-                f"Model backend is not in CUDA (detected: {backend_device}). "
-                "CPU fallback is not allowed."
+                f"Model backend is not using {device} (detected: {backend_device})."
             )
 
         clip_timestamps = build_clip_timestamps(duration_s, chosen_chunk)
@@ -474,10 +479,16 @@ def parse_args() -> argparse.Namespace:
         help="Preset profile (default: balanced).",
     )
     parser.add_argument(
+        "--device",
+        choices=["cuda", "cpu"],
+        default="cuda",
+        help="ASR device (default: cuda).",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=32,
-        help="Target batch size for batched GPU inference (default: 32).",
+        help="Target batch size; presets adjust it for the selected device.",
     )
     parser.add_argument(
         "--beam-size",
@@ -526,8 +537,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compute-type",
-        default="float16",
-        help="Requested compute type (default: float16).",
+        default="auto",
+        help="Compute type (default: auto; float16 on CUDA, int8 on CPU).",
     )
     parser.add_argument(
         "--output-format",
@@ -552,9 +563,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--diarization-device",
-        choices=["cpu", "cuda"],
-        default="cpu",
-        help="Device for diarization stage (default: cpu).",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Diarization device (default: same as --device).",
     )
     parser.add_argument(
         "--num-speakers",
@@ -588,6 +599,7 @@ def main() -> None:
             output_dir=Path(args.output_dir),
             model_name=args.model,
             language=language,
+            device=args.device,
             batch_size=args.batch_size,
             requested_compute_type=args.compute_type,
             beam_size=args.beam_size,

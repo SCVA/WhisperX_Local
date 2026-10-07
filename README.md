@@ -1,7 +1,6 @@
-﻿# WhisperX Local (GPU)
+# WhisperX Local
 
-Transcripción local de audio en español usando GPU NVIDIA.
-Requiere python 3.13
+Transcripcion local de audio en espanol usando GPU NVIDIA o CPU. Requiere Python 3.13.
 
 ## Archivos principales
 
@@ -9,7 +8,7 @@ Requiere python 3.13
 - `requirements-gpu.txt`: dependencias Python.
 - `outputs/`: carpeta de salida.
 
-## Instalación (Python global, sin venv)
+## Instalacion (Python global, sin venv)
 
 ```powershell
 python -m pip install --upgrade pip
@@ -17,29 +16,43 @@ python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==
 python -m pip install -r requirements-gpu.txt
 ```
 
-## Uso rápido
+## Uso con GPU
 
-### 1) TXT sin hablantes (más rápido)
-
-```powershell
-python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --model large-v3 --language es --preset fast --compute-type float16 --output-format txt --log-progress
-```
-
-### 2) DOCX con hablantes (diarización)
+### TXT sin hablantes
 
 ```powershell
-python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --model large-v3 --language es --preset fast --compute-type float16 --diarize --hf-token "TU_TOKEN_HF" --diarization-device cuda --output-format docx --docx-title "Relatoria Claustro" --log-progress
+python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --device cuda --model large-v3 --language es --preset fast --output-format txt --log-progress
 ```
 
-## Opciones útiles
+### DOCX con hablantes
 
-- Número fijo de hablantes:
+```powershell
+python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --device cuda --model large-v3 --language es --preset fast --diarize --hf-token "TU_TOKEN_HF" --output-format docx --docx-title "Relatoria Claustro" --log-progress
+```
+
+## Uso con CPU
+
+### TXT sin hablantes
+
+```powershell
+python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --device cpu --model large-v3 --language es --preset fast --output-format txt --log-progress
+```
+
+### DOCX con hablantes
+
+```powershell
+python whisperx_local.py --audio-file "claustro26mayo2026.wav" --output-dir outputs --device cpu --model large-v3 --language es --preset fast --diarize --hf-token "TU_TOKEN_HF" --output-format docx --docx-title "Relatoria Claustro" --log-progress
+```
+
+## Opciones de hablantes
+
+Numero fijo:
 
 ```powershell
 --num-speakers 6
 ```
 
-- Rango de hablantes:
+Rango:
 
 ```powershell
 --min-speakers 4 --max-speakers 10
